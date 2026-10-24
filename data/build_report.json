@@ -1,0 +1,59 @@
+{
+ "window_tiles": [
+  80,
+  80
+ ],
+ "window_meters": [
+  240.0,
+  240.0
+ ],
+ "full_grid": 110,
+ "spawn_tile": {
+  "x": 35,
+  "y": 31,
+  "dir": "right"
+ },
+ "walkable_tiles_in_window": 3673,
+ "reachable_from_spawn": 3651,
+ "reachable_ratio": 0.994,
+ "entrances_core_tiles": {
+  "west": [
+   38,
+   31
+  ],
+  "east": [
+   49,
+   31
+  ]
+ },
+ "station_core_tile": [
+  40,
+  40
+ ],
+ "signs": [
+  [
+   42,
+   43
+  ],
+  [
+   69,
+   38
+  ]
+ ],
+ "counts": {
+  "land_parking": 4,
+  "land_grass": 3,
+  "land_water": 1,
+  "land_sand": 2,
+  "zebra": 15,
+  "rail_ways": 11,
+  "rail_viaduct_ways": 11,
+  "station_poly_tiles": 1372,
+  "buildings": 191,
+  "passage_tiles": 99,
+  "trees": 22,
+  "fountain_jets": 1,
+  "lamps_generated": 9
+ },
+ "viaduct": "railway=rail with bridge=viaduct layer 1/2; inside the VARIE footprint (station building). Solid; crossed only via building_passage/corridor tiles"
+}

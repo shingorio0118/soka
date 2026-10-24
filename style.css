@@ -1,0 +1,48 @@
+/* all UI: square corners, no emoji, no external resources */
+*, *::before, *::after { box-sizing: border-box; border-radius: 0 !important; }
+html, body {
+  margin: 0; padding: 0; height: 100%; width: 100%;
+  overflow: hidden; position: fixed; inset: 0;
+  overscroll-behavior: none; background: #1d2330; color: #eef1f6;
+  font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", Meiryo, system-ui, sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; image-rendering: pixelated; image-rendering: crisp-edges; }
+
+#title, #place, #hint {
+  position: fixed; background: rgba(24, 30, 44, .88); border: 2px solid #eef1f6; color: #eef1f6;
+  padding: 4px 10px; font-size: 14px; line-height: 1.3; pointer-events: none; letter-spacing: .04em;
+}
+#title { top: calc(8px + env(safe-area-inset-top)); left: 8px; font-weight: 700; font-size: 15px; }
+#place { top: calc(8px + env(safe-area-inset-top)); right: 8px; font-size: 12px; }
+#place[hidden] { display: none; }
+#hint { top: calc(46px + env(safe-area-inset-top)); left: 8px; font-size: 11px; transition: opacity .6s; }
+#hint.gone { opacity: 0; }
+
+#attr {
+  position: fixed; left: 0; right: 0; bottom: 0; text-align: center; font-size: 10px; line-height: 1;
+  padding: 4px 6px calc(4px + env(safe-area-inset-bottom)); background: rgba(24, 30, 44, .85); color: #c9d0dd;
+}
+#attr a { color: #c9d0dd; text-decoration: underline; }
+
+#dpad {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(26px + env(safe-area-inset-bottom));
+  display: none; grid-template-columns: repeat(3, 62px); grid-template-rows: repeat(3, 62px); gap: 3px;
+  touch-action: none;
+}
+#dpad button {
+  width: 62px; height: 62px; margin: 0; padding: 0; border: 2px solid #eef1f6; background: rgba(24, 30, 44, .78); color: #eef1f6;
+  touch-action: none; display: flex; align-items: center; justify-content: center; -webkit-appearance: none; appearance: none; outline: none;
+}
+#dpad button.on { background: #e8c640; }
+#dpad button i { display: block; width: 0; height: 0; border: 11px solid transparent; }
+#dpad button[data-dir=up]    { grid-column: 2; grid-row: 1; } #dpad button[data-dir=up] i    { border-bottom: 16px solid #eef1f6; border-top-width: 0; }
+#dpad button[data-dir=left]  { grid-column: 1; grid-row: 2; } #dpad button[data-dir=left] i  { border-right: 16px solid #eef1f6; border-left-width: 0; }
+#dpad button[data-dir=right] { grid-column: 3; grid-row: 2; } #dpad button[data-dir=right] i { border-left: 16px solid #eef1f6; border-right-width: 0; }
+#dpad button[data-dir=down]  { grid-column: 2; grid-row: 3; } #dpad button[data-dir=down] i  { border-top: 16px solid #eef1f6; border-bottom-width: 0; }
+#dpad button.on i { filter: invert(1); }
+#dpad .mid { grid-column: 2; grid-row: 2; background: rgba(24, 30, 44, .5); border: 2px solid rgba(238, 241, 246, .4); }
+
+@media (pointer: coarse), (max-width: 700px) { #dpad { display: grid; } }
+body.dpad-on #dpad { display: grid; }
