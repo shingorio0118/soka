@@ -16,7 +16,7 @@ Tags are sanitised before saving (whitelist of keys; names only for the station,
 import json, sys, time, math, urllib.request, xml.etree.ElementTree as ET
 from pathlib import Path
 
-UA = "soka-map-mvp/0.2 (local build; contact shingo.tanaka@mail.grokbot.com)"
+UA = "soka-map-mvp/0.2"
 DATA = Path(__file__).resolve().parent.parent / "data"
 DATA.mkdir(exist_ok=True)
 
