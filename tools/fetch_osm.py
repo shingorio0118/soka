@@ -133,7 +133,7 @@ AMENITY_CAT = {"restaurant": "food", "fast_food": "food", "pub": "food", "bar": 
                "public_bath": "service", "arts_centre": "service"}
 HIGH_PRI = {"department_store", "mall", "townhall", "school", "library", "police", "post_office", "hospital", "place_of_worship", "museum", "park"}
 RESIDENCE_BUILDING = {"house", "residential", "detached", "semidetached_house", "terrace", "apartments", "dormitory", "bungalow", "farm"}
-# bare family names / given-name endings: a shop or a pub that is just "田中" cannot be told apart from a private person
+# bare family names / given-name endings: a shop or a pub that is just "○○" cannot be told apart from a private person
 SURNAMES = set("佐藤 鈴木 高橋 伊藤 渡辺 山本 中村 小林 加藤 吉田 山田 佐々木 山口 松本 井上 木村 林 斎藤 清水 山崎 森 池田 橋本 阿部 石川 山下 中島 石井 小川 前田 岡田 長谷川 藤田 後藤 近藤 村上 遠藤 青木 坂本 斉藤 福田 太田 西村 藤井 金子 岡本 藤原 三浦 中野 原田 松田 竹内 小野 田村 中山 和田 石田 森田 上田 原 柴田 酒井 工藤 横山 宮崎 宮本 内田 高木 安藤 谷口 大野 丸山 今井 河野 藤本 村田 武田 上野 杉山 増田 平野 大塚 千葉 久保 松井 小島 岩崎 桜井 木下 野口 松尾 菊地 野村 新井 浅井 浅古 藤城 小沢 会田 田口 寺田 川端 萩原 青山 関 星野 荒井".split())
 GIVEN_END = re.compile(r"^[\u4e00-\u9fff]{2,3}$")
 GIVEN_SUFFIX = tuple("郎 男 吉 助 夫 彦 雄 蔵 太".split())
