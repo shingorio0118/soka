@@ -634,5 +634,31 @@
   "草加神社通り",
   "商店街"
  ],
+ "pois": {
+  "in_map": 167,
+  "by_category": {
+   "public": 13,
+   "cafe": 11,
+   "sacred": 15,
+   "convenience": 12,
+   "shop": 28,
+   "health": 17,
+   "service": 24,
+   "food": 42,
+   "finance": 5
+  },
+  "kept_before_crop": 174,
+  "dropped_by_reason": {
+   "not_a_public_poi_tag": 112,
+   "low_value_utility": 19,
+   "person_like": 5,
+   "bad_length": 1,
+   "sensitive_or_craft": 4,
+   "residence": 1,
+   "no_geometry": 1,
+   "duplicate": 1
+  },
+  "note": "counts only; names of dropped items are never saved"
+ },
  "viaduct": "the whole line is railway=rail bridge=viaduct (OSM). Solid; crossed via building_passage/corridor tiles in the station and by roads/paths passing under (see rail_crossings)"
 }

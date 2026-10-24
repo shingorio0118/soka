@@ -12,8 +12,10 @@ Usage: python3 tools/fetch_osm.py [--cache DIR]
   --cache DIR  keep the raw API XML there and reuse it (default /tmp/soka_osm_xml, OUTSIDE the repo:
                the raw XML contains OSM user names / changesets, which must never be stored in the repo).
 Tags are sanitised before saving (whitelist of keys; names only for the station, streets and public landmarks).
+Named POIs (shops, eateries, clinics, public facilities ...) are saved separately as "pois" (name, category, position only) after a
+privacy filter (see extract_pois); dropped names are never saved, only counts.
 """
-import json, sys, time, math, urllib.request, xml.etree.ElementTree as ET
+import json, sys, time, math, re, collections, urllib.request, xml.etree.ElementTree as ET
 from pathlib import Path
 
 UA = "soka-map-mvp/0.2"
@@ -106,6 +108,106 @@ def sanitize_tags(tags):
             del out["name"]
     return out
 
+
+# ---- named POIs (shops, restaurants, public facilities ...) for the on-map name tags -----------------------------
+# PRIVACY: only the display name, a coarse category and the position of a PUBLIC place (shop / eatery / clinic / school /
+# shrine ...) are kept.  Anything that could be a private person's name or home is dropped here, before saving; the
+# dropped names are never written anywhere (only counts, see _meta.poi_filter).
+# category id -> (display name, tag colour, default priority)
+POI_CATS = [
+    ("convenience", "コンビニ", "#2f9e44"), ("shop", "買い物", "#e8590c"), ("food", "飲食", "#d6336c"),
+    ("cafe", "カフェ", "#8d5524"), ("finance", "金融・郵便", "#1c7ed6"), ("health", "医療・薬局", "#0ca678"),
+    ("public", "公共・学校", "#5f3dc4"), ("sacred", "寺社・公園・史跡", "#3b8f3b"), ("service", "サービス・娯楽", "#7048e8"),
+]
+SHOP_CAT = {"convenience": "convenience", "supermarket": "shop", "department_store": "shop", "mall": "shop", "variety_store": "shop",
+            "coffee": "cafe", "tea": "cafe", "pastry": "cafe", "confectionery": "cafe", "bakery": "cafe", "ice_cream": "cafe",
+            "hairdresser": "service", "beauty": "service", "massage": "service", "dry_cleaning": "service", "laundry": "service",
+            "mobile_phone": "shop", "optician": "shop", "chemist": "health", "pharmacy": "health"}
+AMENITY_CAT = {"restaurant": "food", "fast_food": "food", "pub": "food", "bar": "food", "food_court": "food", "izakaya": "food",
+               "cafe": "cafe", "ice_cream": "cafe",
+               "bank": "finance", "post_office": "finance", "doctors": "health", "clinic": "health", "dentist": "health", "pharmacy": "health",
+               "hospital": "health", "veterinary": "health", "nursing_home": "public", "social_facility": "public",
+               "school": "public", "kindergarten": "public", "college": "public", "university": "public", "townhall": "public",
+               "library": "public", "police": "public", "fire_station": "public", "community_centre": "public", "childcare": "public",
+               "place_of_worship": "sacred", "karaoke_box": "service", "nightclub": "service", "cinema": "service", "theatre": "service",
+               "public_bath": "service", "arts_centre": "service"}
+HIGH_PRI = {"department_store", "mall", "townhall", "school", "library", "police", "post_office", "hospital", "place_of_worship", "museum", "park"}
+RESIDENCE_BUILDING = {"house", "residential", "detached", "semidetached_house", "terrace", "apartments", "dormitory", "bungalow", "farm"}
+# bare family names / given-name endings: a shop or a pub that is just "田中" cannot be told apart from a private person
+SURNAMES = set("佐藤 鈴木 高橋 田中 伊藤 渡辺 山本 中村 小林 加藤 吉田 山田 佐々木 山口 松本 井上 木村 林 斎藤 清水 山崎 森 池田 橋本 阿部 石川 山下 中島 石井 小川 前田 岡田 長谷川 藤田 後藤 近藤 村上 遠藤 青木 坂本 斉藤 福田 太田 西村 藤井 金子 岡本 藤原 三浦 中野 原田 松田 竹内 小野 田村 中山 和田 石田 森田 上田 原 柴田 酒井 工藤 横山 宮崎 宮本 内田 高木 安藤 谷口 大野 丸山 今井 河野 藤本 村田 武田 上野 杉山 増田 平野 大塚 千葉 久保 松井 小島 岩崎 桜井 木下 野口 松尾 菊地 野村 新井 浅井 浅古 藤城 小沢 会田 田口 寺田 川端 萩原 青山 関 星野 荒井".split())
+GIVEN_END = re.compile(r"^[\u4e00-\u9fff]{2,3}$")
+GIVEN_SUFFIX = tuple("郎 男 吉 助 夫 彦 雄 蔵 太".split())
+BIZ_WORDS = ("店", "屋", "軒", "亭", "堂", "館", "庵", "苑", "園", "院", "科", "薬局", "銀行", "金庫", "郵便", "書店", "食堂", "酒場", "酒家", "寿司", "鮨", "整骨", "接骨", "神社", "寺", "公園", "学校", "幼稚園")
+ADDRESS_RE = re.compile(r"(\d+\s*[-\u2010-\u2015ー]\s*\d+)|([町丁村字区]\s*[0-9０-９]+$)|^[0-9０-９\s-]+$")
+
+def poi_pri(sub, cat):
+    return 4 if sub in HIGH_PRI else (2 if cat == "convenience" else 1)
+
+def poi_category(t):
+    """-> (cat, sub) or a drop reason string"""
+    if t.get("access") in ("private", "no") or t.get("disused") or t.get("abandoned") or t.get("demolished"): return "private_or_closed"
+    b = t.get("building")
+    if b in RESIDENCE_BUILDING or t.get("landuse") == "residential": return "residence"
+    sh, am, le, to, hi, mm = t.get("shop"), t.get("amenity"), t.get("leisure"), t.get("tourism"), t.get("historic"), t.get("man_made")
+    if sh in ("funeral_directors", "security") or t.get("craft") or t.get("office") == "lawyer": return "sensitive_or_craft"
+    if am in ("parking", "bicycle_parking", "bicycle_rental", "vending_machine", "atm", "post_box", "bench", "toilets", "waste_basket", "parking_space") or hi == "locomotive":
+        return "low_value_utility"      # parking lots, bike racks, vending machines, ATMs: not worth a name tag
+    if sh == "department_store" or sh == "mall": return ("shop", sh)
+    if sh and sh in SHOP_CAT: return (SHOP_CAT[sh], sh)
+    if am in AMENITY_CAT: return (AMENITY_CAT[am], am)
+    if sh and sh != "vacant": return ("shop", sh)
+    if t.get("office") in ("estate_agent", "government", "telecommunication", "insurance"): return ("service" if t.get("office") == "estate_agent" else "public", t["office"])
+    if le == "park" or le == "garden": return ("sacred", "park")
+    if le == "playground" and any(k in t.get("name", "") for k in ("公園", "遊園", "広場")): return ("sacred", "park")
+    if le in ("amusement_arcade", "adult_gaming_centre", "fitness_centre", "sports_centre", "pitch", "swimming_pool"): return ("service", le)
+    if to in ("museum", "hotel", "hostel", "attraction", "gallery"): return ("public" if to in ("museum", "attraction", "gallery") else "service", to)
+    if hi in ("wayside_shrine", "memorial", "monument", "ruins", "shrine") or mm == "ceremonial_gate": return ("sacred", "historic")
+    return "not_a_public_poi_tag"
+
+def person_like(name):
+    n = name.strip()
+    if re.search(r"(家|邸|宅)(の.*)?$|家住宅|様", n): return True      # "〇〇家の地蔵堂", "〇〇家住宅", "〇〇邸"
+    if n in SURNAMES: return True
+    if GIVEN_END.match(n) and n.endswith(GIVEN_SUFFIX) and not any(w in n for w in BIZ_WORDS): return True
+    if re.match(r"^[\u4e00-\u9fff]{2,3}(ビル|荘|ハイツ|マンション)$", n): return True     # building named after its owner
+    return False
+
+def way_centroid(coords):
+    n = len(coords); return sum(c[0] for c in coords) / n, sum(c[1] for c in coords) / n
+
+def extract_pois(nodes, ways):
+    pois, drop = [], collections.Counter()
+    def consider(t, lat, lon, bbox):
+        nm = (t.get("name:ja") or t.get("name") or "").strip()
+        if not nm and not t.get("name"): return
+        if t.get("name:ja") and not re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", nm): nm = t.get("name", nm).strip()
+        r = poi_category(t)
+        if isinstance(r, str): drop[r] += 1; return
+        if len(nm) < 2 or len(nm) > 30: drop["bad_length"] += 1; return
+        if ADDRESS_RE.search(nm): drop["address_like"] += 1; return
+        if person_like(nm): drop["person_like"] += 1; return
+        cat, sub = r
+        pois.append({"name": nm, "cat": cat, "sub": sub, "pri": poi_pri(sub, cat), "lat": round(lat, 6), "lon": round(lon, 6), "bbox": bbox})
+    for nid, (la, lo, t) in nodes.items():
+        if t.get("name") or t.get("name:ja"): consider(t, la, lo, None)
+    for wid, (refs, t) in ways.items():
+        if not (t.get("name") or t.get("name:ja")): continue
+        pts = [(nodes[r][0], nodes[r][1]) for r in refs if r in nodes]
+        if len(pts) < 3: drop["no_geometry"] += 1; continue
+        la, lo = way_centroid(pts)
+        consider(t, la, lo, [round(min(p[0] for p in pts), 6), round(min(p[1] for p in pts), 6), round(max(p[0] for p in pts), 6), round(max(p[1] for p in pts), 6)])
+    # the same shop is often mapped twice (a node and its building): keep one per (name, 30 m)
+    pois.sort(key=lambda p: (p["bbox"] is None, p["name"], p["lat"], p["lon"]))
+    keep = []
+    for p in pois:
+        dup = [q for q in keep if q["name"] == p["name"] and abs(q["lat"] - p["lat"]) < 0.00027 and abs(q["lon"] - p["lon"]) < 0.00033]
+        if dup:
+            drop["duplicate"] += 1
+            if dup[0]["bbox"] is None and p["bbox"] is not None: dup[0]["bbox"] = p["bbox"]
+            continue
+        keep.append(p)
+    return keep, drop
+
 def merge_xml(blobs):
     nodes, ways, rels = {}, {}, {}
     def tags(e): return {t.get("k"): t.get("v") for t in e.findall("tag")}
@@ -145,6 +247,8 @@ def main():
     nodes, ways, rels = merge_xml(blobs)
     print("merged: %d nodes, %d ways, %d relations (after de-duplication by id)" % (len(nodes), len(ways), len(rels)))
     els = to_json(nodes, ways, rels)
+    pois, drop = extract_pois(nodes, ways)
+    print("pois kept: %d, dropped: %s" % (len(pois), dict(drop)))
     st = None
     for e in els:
         if e["type"] == "node" and e["id"] == STATION_NODE_ID: st = e
@@ -158,7 +262,9 @@ def main():
          "_source": "api.openstreetmap.org /api/0.6/map (tiled)",
          "_meta": {"center": [st["lat"], st["lon"]] if st else list(STATION_FALLBACK),
                    "bbox_s_w_n_e": [s, w, n, e_], "fetch_extent_m_x": FETCH_X, "fetch_extent_m_y": FETCH_Y,
-                   "fetched": time.strftime("%Y-%m-%d %H:%M:%S %Z"), "license": "ODbL 1.0, (c) OpenStreetMap contributors"}}
+                   "fetched": time.strftime("%Y-%m-%d %H:%M:%S %Z"), "license": "ODbL 1.0, (c) OpenStreetMap contributors",
+                   "poi_filter": {"kept": len(pois), "dropped_by_reason": dict(drop)}},
+         "poi_categories": [{"id": c, "name": n, "color": col} for c, n, col in POI_CATS], "pois": pois}
     out = DATA / "osm_raw.json"
     out.write_text(json.dumps(j, ensure_ascii=False, separators=(",", ":")))
     print("wrote", out, len(els), "elements,", out.stat().st_size // 1024, "KB")

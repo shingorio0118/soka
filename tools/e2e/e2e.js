@@ -18,6 +18,87 @@ const fs = require('fs'); fs.mkdirSync(OUT, { recursive: true });
   const results = {}; const checks = [];
   const check = (name, ok, info) => { checks.push({ name, ok: !!ok, info }); };
 
+
+  // ---------- POI name tags: data lint (privacy), near-name label, tag layout (cap / no overlap), mini-map list
+  const fsx = require('fs'), pathx = require('path');
+  const poiTests = async (pg, tag, shotPrefix) => {
+    const info = await pg.evaluate(() => {
+      const S = window.__soka, P = S.pois(), cats = S.map.poiCats;
+      const walk = (x, y) => !S.isSolid(x, y);
+      // walkable tile next to a POI (within 1.5 tiles of its outline) - a few per category, plus the densest cluster
+      const spots = [];
+      const od = (p, x, y) => Math.hypot(Math.max(p.x0 - x, 0, x - p.x1), Math.max(p.y0 - y, 0, y - p.y1));
+      const pick = p => { let best = null, bd = 2.1; for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const x = p.x + dx, y = p.y + dy; if (x < 1 || y < 1 || x >= S.map.w - 1 || y >= S.map.h - 1 || !walk(x, y)) continue;
+        const d = od(p, x, y); if (d < bd || (best === null && d <= 2.1)) { bd = d; best = [x, y]; } } return best; };
+      let reachable = 0; P.forEach(p => { if (pick(p)) reachable++; });
+      cats.forEach((c, ci) => { P.filter(p => p.cat === ci).slice(0, 4).forEach(p => { const t = pick(p); if (t) spots.push({ name: p.name, cat: ci, at: t }); }); });
+      // densest walkable cluster: most POIs within 6 tiles
+      let best = null, bn = 0;
+      for (let y = 4; y < S.map.h - 4; y += 2) for (let x = 4; x < S.map.w - 4; x += 2) { if (!walk(x, y)) continue; let n = 0; for (const p of P) if (Math.abs(p.x - x) <= 6 && Math.abs(p.y - y) <= 6) n++; if (n > bn) { bn = n; best = [x, y]; } }
+      // a walkable tile far (>= 9 tiles) from every POI
+      let far = null; for (let y = 10; y < S.map.h - 10 && !far; y += 5) for (let x = 10; x < S.map.w - 10 && !far; x += 5) { if (!walk(x, y)) continue; if (P.every(p => Math.hypot(p.x - x, p.y - y) > 9)) far = [x, y]; }
+      return { n: P.length, cats: cats.map(c => c.name), names: P.map(p => p.name), reachable, inb: P.every(p => p.x >= 0 && p.y >= 0 && p.x < S.map.w && p.y < S.map.h && p.cat >= 0 && p.cat < cats.length), spots, dense: best, denseN: bn, far };
+    });
+    results['poi_' + tag] = { count: info.n, withWalkableTileWithin2: info.reachable, dense: info.dense, denseN: info.denseN };
+    check(tag + ': named POIs loaded (>= 100) and inside the map', info.n >= 100 && info.inb, info.n);
+    // privacy lint
+    const bad = info.names.filter(n => /@|https?:|www\.|\d{2,4}-\d{2,4}-\d{3,4}|〒|^[\d\s-]+$|(家|邸)$|様$/.test(n));
+    check(tag + ': no phone / mail / URL / address / person-style names in POI names', bad.length === 0, bad.length);
+    const raw = fsx.readFileSync(pathx.join(__dirname, '../../assets/map.json'), 'utf8');
+    const leaks = ['"uid"', '"user"', 'changeset', 'addr:', 'phone', 'email', 'website', 'contact:'].filter(k => raw.includes(k));
+    check(tag + ': assets/map.json has no user / address / contact keys', leaks.length === 0, leaks);
+    // near label: at a tile next to a POI the top label shows a POI name (the nearest one) with a category line
+    let okNear = 0, okTop = 0;
+    for (const sp_ of info.spots) {
+      await pg.evaluate((a) => window.__soka.teleport(a[0], a[1], 'down'), sp_.at);
+      const r = await pg.evaluate(() => ({ near: window.__soka.nearPoi(), place: window.__soka.placeText(), tags: window.__soka.tags() }));
+      if (r.near) okNear++;
+      if (r.near && r.place && r.place[0] === r.near && r.place[1]) okTop++;
+    }
+    check(tag + ': next to a POI the nearest name is found (' + okNear + '/' + info.spots.length + ')', okNear === info.spots.length, [okNear, info.spots.length]);
+    check(tag + ': top label shows POI name + category/area line', okTop === okNear && okTop > 0, [okTop, okNear]);
+    // layout: cap, no overlap, inside the screen, at the densest cluster and at every spot
+    const lay = [info.dense, ...info.spots.map(x => x.at)];
+    let worstCount = 0, overlap = 0, offscreen = 0;
+    for (const at of lay) {
+      await pg.evaluate((a) => window.__soka.teleport(a[0], a[1], 'down'), at);
+      const L = await pg.evaluate(() => ({ t: window.__soka.tags(), cw: window.innerWidth * (window.devicePixelRatio || 1) }));
+      worstCount = Math.max(worstCount, L.t.length);
+      for (let i = 0; i < L.t.length; i++) {
+        const a = L.t[i]; // x is relative to the screen centre (device px)
+        if (a.x < -L.cw / 2 || a.x + a.w > L.cw / 2) offscreen++;
+        for (let j = i + 1; j < L.t.length; j++) { const b = L.t[j]; if (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y) overlap++; }
+      }
+    }
+    const cap = tag === 'phone' ? 7 : 12;
+    results['poi_layout_' + tag] = { worstCount, overlap, offscreen, cap };
+    check(tag + ': name tags capped at ' + cap + ' (max seen ' + worstCount + ')', worstCount <= cap && worstCount > 0, worstCount);
+    check(tag + ': name tags never overlap each other and stay on screen', overlap === 0 && offscreen === 0, { overlap, offscreen });
+    if (info.far) {
+      await pg.evaluate((a) => window.__soka.teleport(a[0], a[1], 'down'), info.far);
+      const f = await pg.evaluate(() => ({ t: window.__soka.tags().length, near: window.__soka.nearPoi() }));
+      check(tag + ': no tags / no POI name far from every POI (no clutter)', f.t === 0 && !f.near, f);
+    }
+    // screenshots at the densest cluster
+    await pg.evaluate((a) => window.__soka.teleport(a[0], a[1], 'down'), info.dense); await sleep(250);
+    await pg.screenshot({ path: OUT + shotPrefix + '-shopping-street-labels.png' });
+    // mini-map: legend chips, category list, select a place
+    await pg.keyboard.press('m'); await sleep(300);
+    const m1 = await pg.evaluate(() => ({ chips: document.querySelectorAll('#minicats .chip').length, list: document.querySelectorAll('#minilist .item').length, sel: !document.getElementById('minisel').hidden }));
+    await pg.click('#minicats .chip:nth-child(3)'); await sleep(250);
+    const m2 = await pg.evaluate(() => ({ list: document.querySelectorAll('#minilist .item').length, on: document.querySelector('#minicats .chip.on') && document.querySelector('#minicats .chip.on').textContent }));
+    await pg.click('#minilist .item:nth-child(2)'); await sleep(250);
+    const m3 = await pg.evaluate(() => ({ sel: !document.getElementById('minisel').hidden, txt: document.getElementById('minisel').textContent }));
+    await pg.screenshot({ path: OUT + shotPrefix + '-minimap-pois.png' });
+    await pg.click('#minicats .chip:nth-child(3)'); await sleep(150);
+    const m4 = await pg.evaluate(() => ({ list: document.querySelectorAll('#minilist .item').length }));
+    results['poi_mini_' + tag] = { m1, m2, m3, m4 };
+    check(tag + ': mini-map legend has one chip per category', m1.chips === info.cats.length && m1.list === 0 && !m1.sel, m1);
+    check(tag + ': mini-map category chip lists its places, tapping one marks it', m2.list > 0 && m3.sel && m3.txt.length > 2 && m4.list === 0, { m2, m3, m4 });
+    await pg.keyboard.press('Escape'); await sleep(200);
+  };
+
   // in-page helpers: BFS over walkable tiles, finders
   const helpers = () => {
     const S = window.__soka, m = S.map, W = m.w, H = m.h;
@@ -199,6 +280,8 @@ const fs = require('fs'); fs.mkdirSync(OUT, { recursive: true });
   await page.click('#mapbtn'); await sleep(200); ms = await st(page);
   check('mini-map opens, freezes movement, closes', btnText === '閉じる' && ms2.tx === sp.x && !ms.mini, { btnText, frozenAt: [ms2.tx, ms2.ty], closed: !ms.mini });
 
+  await poiTests(page, 'desktop', 'desktop');
+
   // frame rate while walking (desktop, software GL headless: a pessimistic number)
   await page.evaluate((s) => window.__soka.teleport(s.x, s.y, 'right'), sp);
   const walkP = page.keyboard.down('ArrowRight');
@@ -250,6 +333,8 @@ const fs = require('fs'); fs.mkdirSync(OUT, { recursive: true });
   // phone: station front + label
   await page.evaluate((s) => window.__soka.teleport(s.x + 2, s.y, 'right'), sp); await sleep(300);
   await page.screenshot({ path: OUT + 'phone-spawn.png' });
+  await page.evaluate(() => { document.getElementById('mapbtn').getAttribute('aria-pressed') === 'true' && document.getElementById('mapbtn').click(); });
+  await poiTests(page, 'phone', 'phone');
   await page.close();
 
   console.log(JSON.stringify(results, null, 1));

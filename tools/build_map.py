@@ -855,8 +855,27 @@ used = sorted(set(lab_flat) - {0}); remap = {0: 0}
 for k_, u in enumerate(used, 1): remap[u] = k_
 lab_names = [lab_names[u - 1] for u in used]
 lab_flat = [remap[v] for v in lab_flat]
+# ---------------------------------------------------------------- named POIs (name tags; already privacy-filtered by fetch_osm.py)
+poi_cats = raw.get("poi_categories", [])
+cat_idx = {c["id"]: i for i, c in enumerate(poi_cats)}
+poi_out = []
+for p_ in raw.get("pois", []):
+    x_, y_ = to_m({"lat": p_["lat"], "lon": p_["lon"]})
+    tx_, ty_ = gx(x_) - OFF, gy(y_) - OFF
+    if not (0 <= tx_ < CW and 0 <= ty_ < CH): continue
+    if p_.get("bbox"):
+        (xa, ya), (xb, yb) = to_m({"lat": p_["bbox"][0], "lon": p_["bbox"][1]}), to_m({"lat": p_["bbox"][2], "lon": p_["bbox"][3]})
+        bx0, bx1 = sorted((gx(xa) - OFF, gx(xb) - OFF)); by0, by1 = sorted((gy(ya) - OFF, gy(yb) - OFF))
+        if bx1 - bx0 > 40 or by1 - by0 > 40: bx0, by0, bx1, by1 = tx_, ty_, tx_, ty_      # huge area (park etc.): near its centre only
+        bx0, by0 = max(0, bx0), max(0, by0); bx1, by1 = min(CW - 1, bx1), min(CH - 1, by1)
+    else:
+        bx0, by0, bx1, by1 = tx_, ty_, tx_, ty_
+    poi_out.append([tx_, ty_, p_["name"], cat_idx[p_["cat"]], p_["pri"], bx0, by0, bx1, by1])
+poi_out.sort(key=lambda r: (r[1], r[0], r[2]))
+poi_counts = collections.Counter(poi_cats[r[3]]["id"] for r in poi_out)
+
 out = {
-    "version": 2, "tile": 16, "cellMeters": CELL, "w": CW, "h": CH,
+    "version": 3, "tile": 16, "cellMeters": CELL, "w": CW, "h": CH,
     "extentMeters": {"x": list(CORE_X), "y": list(CORE_Y)},
     "center": {"lat": LAT0, "lon": LON0},
     "attribution": "地図データ © OpenStreetMap contributors (ODbL)",
@@ -864,6 +883,7 @@ out = {
     "encoding": "row-major run-length [value,count,...]",
     "layers": {"base": rle(crop_flat(base, idn)), "deco": rle(crop_flat(deco, idn)), "over": rle(crop_flat(over, idn))},
     "solid": rle(crop_flat(solid, lambda v: 1 if v else 0)),
+    "poiCats": poi_cats, "pois": poi_out,
     "labelNames": lab_names, "labelGrid": rle(lab_flat),
     "objects": [dict(o, x=o["x"] - OFF, y=o["y"] - OFF) for o in objects],
     "station": {"x": stx - OFF, "y": sty - OFF},
@@ -883,6 +903,8 @@ report = {
     "street_signs": [[a, [p[0] - OFF, p[1] - OFF]] for a, p in street_signs],
     "entrances_core_tiles": {"west": list(tile_core(west)), "east": list(tile_core(east))}, "station_core_tile": list(tile_core(station)),
     "signs": [[s_[0] - OFF, s_[1] - OFF] if s_ else None for s_ in signs], "counts": dict(notes), "labels": lab_names,
+    "pois": {"in_map": len(poi_out), "by_category": dict(poi_counts), "kept_before_crop": len(raw.get("pois", [])),
+             "dropped_by_reason": raw["_meta"].get("poi_filter", {}).get("dropped_by_reason", {}), "note": "counts only; names of dropped items are never saved"},
     "viaduct": "the whole line is railway=rail bridge=viaduct (OSM). Solid; crossed via building_passage/corridor tiles in the station and by roads/paths passing under (see rail_crossings)",
 }
 (ROOT / "data/build_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
