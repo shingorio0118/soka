@@ -1,59 +1,638 @@
 {
- "window_tiles": [
-  80,
-  80
+ "map_tiles": [
+  270,
+  320
  ],
- "window_meters": [
-  240.0,
-  240.0
+ "map_meters": [
+  810.0,
+  960.0
  ],
- "full_grid": 110,
+ "extent_m": {
+  "x": [
+   -390.0,
+   420.0
+  ],
+  "y": [
+   -480.0,
+   480.0
+  ]
+ },
+ "raster_grid": [
+  294,
+  344
+ ],
  "spawn_tile": {
-  "x": 35,
-  "y": 31,
+  "x": 125,
+  "y": 151,
   "dir": "right"
  },
- "walkable_tiles_in_window": 3673,
- "reachable_from_spawn": 3651,
- "reachable_ratio": 0.994,
+ "walkable_tiles": 66501,
+ "reachable_from_spawn": 66153,
+ "reachable_ratio": 0.9948,
+ "reachable_ratio_without_station_passages": 0.9933,
+ "east_side_reachable_without_station_passages": true,
+ "cut_off_areas": [
+  {
+   "tiles": 27,
+   "centre_m": [
+    143,
+    -293
+   ],
+   "bbox_tiles": [
+    175,
+    58,
+    179,
+    65
+   ],
+   "ground": [
+    [
+     "ground",
+     27
+    ]
+   ]
+  },
+  {
+   "tiles": 11,
+   "centre_m": [
+    34,
+    -284
+   ],
+   "bbox_tiles": [
+    141,
+    60,
+    141,
+    70
+   ],
+   "ground": [
+    [
+     "ground",
+     11
+    ]
+   ]
+  },
+  {
+   "tiles": 10,
+   "centre_m": [
+    -2,
+    177
+   ],
+   "bbox_tiles": [
+    129,
+    214,
+    129,
+    223
+   ],
+   "ground": [
+    [
+     "ground",
+     10
+    ]
+   ]
+  },
+  {
+   "tiles": 10,
+   "centre_m": [
+    254,
+    247
+   ],
+   "bbox_tiles": [
+    211,
+    241,
+    217,
+    242
+   ],
+   "ground": [
+    [
+     "ground",
+     10
+    ]
+   ]
+  },
+  {
+   "tiles": 10,
+   "centre_m": [
+    -16,
+    219
+   ],
+   "bbox_tiles": [
+    124,
+    228,
+    124,
+    237
+   ],
+   "ground": [
+    [
+     "ground",
+     10
+    ]
+   ]
+  },
+  {
+   "tiles": 10,
+   "centre_m": [
+    -20,
+    252
+   ],
+   "bbox_tiles": [
+    123,
+    239,
+    123,
+    248
+   ],
+   "ground": [
+    [
+     "ground",
+     10
+    ]
+   ]
+  },
+  {
+   "tiles": 9,
+   "centre_m": [
+    -10,
+    160
+   ],
+   "bbox_tiles": [
+    126,
+    209,
+    126,
+    217
+   ],
+   "ground": [
+    [
+     "ground",
+     9
+    ]
+   ]
+  },
+  {
+   "tiles": 8,
+   "centre_m": [
+    32,
+    -180
+   ],
+   "bbox_tiles": [
+    140,
+    96,
+    140,
+    103
+   ],
+   "ground": [
+    [
+     "ground",
+     8
+    ]
+   ]
+  },
+  {
+   "tiles": 8,
+   "centre_m": [
+    34,
+    -381
+   ],
+   "bbox_tiles": [
+    141,
+    29,
+    141,
+    36
+   ],
+   "ground": [
+    [
+     "ground",
+     8
+    ]
+   ]
+  },
+  {
+   "tiles": 8,
+   "centre_m": [
+    57,
+    -411
+   ],
+   "bbox_tiles": [
+    148,
+    21,
+    149,
+    24
+   ],
+   "ground": [
+    [
+     "ground",
+     8
+    ]
+   ]
+  },
+  {
+   "tiles": 8,
+   "centre_m": [
+    28,
+    -264
+   ],
+   "bbox_tiles": [
+    139,
+    68,
+    139,
+    75
+   ],
+   "ground": [
+    [
+     "ground",
+     8
+    ]
+   ]
+  },
+  {
+   "tiles": 6,
+   "centre_m": [
+    22,
+    -171
+   ],
+   "bbox_tiles": [
+    137,
+    100,
+    137,
+    105
+   ],
+   "ground": [
+    [
+     "ground",
+     6
+    ]
+   ]
+  },
+  {
+   "tiles": 6,
+   "centre_m": [
+    32,
+    -240
+   ],
+   "bbox_tiles": [
+    140,
+    77,
+    140,
+    82
+   ],
+   "ground": [
+    [
+     "ground",
+     6
+    ]
+   ]
+  },
+  {
+   "tiles": 6,
+   "centre_m": [
+    -20,
+    315
+   ],
+   "bbox_tiles": [
+    123,
+    262,
+    123,
+    267
+   ],
+   "ground": [
+    [
+     "ground",
+     6
+    ]
+   ]
+  },
+  {
+   "tiles": 6,
+   "centre_m": [
+    20,
+    -192
+   ],
+   "bbox_tiles": [
+    136,
+    93,
+    136,
+    98
+   ],
+   "ground": [
+    [
+     "ground",
+     6
+    ]
+   ]
+  }
+ ],
+ "cut_off_total_tiles": 348,
+ "rail_crossings": [
+  {
+   "way": 102299853,
+   "kind": "unclassified",
+   "name": null,
+   "at_m": [
+    24,
+    -330
+   ],
+   "under_tiles_near": 8,
+   "in_map": true,
+   "reachable_from_spawn": true,
+   "reachable_without_station_passage": true
+  },
+  {
+   "way": 686442937,
+   "kind": "residential",
+   "name": null,
+   "at_m": [
+    12,
+    -215
+   ],
+   "under_tiles_near": 12,
+   "in_map": true,
+   "reachable_from_spawn": true,
+   "reachable_without_station_passage": true
+  },
+  {
+   "way": 737735993,
+   "kind": "path",
+   "name": null,
+   "at_m": [
+    -15,
+    128
+   ],
+   "under_tiles_near": 4,
+   "in_map": true,
+   "reachable_from_spawn": true,
+   "reachable_without_station_passage": true
+  },
+  {
+   "way": 851789030,
+   "kind": "tertiary",
+   "name": "草加神社通り",
+   "at_m": [
+    -19,
+    198
+   ],
+   "under_tiles_near": 10,
+   "in_map": true,
+   "reachable_from_spawn": true,
+   "reachable_without_station_passage": true
+  },
+  {
+   "way": 135978806,
+   "kind": "unclassified",
+   "name": null,
+   "at_m": [
+    -28,
+    352
+   ],
+   "under_tiles_near": 8,
+   "in_map": true,
+   "reachable_from_spawn": true,
+   "reachable_without_station_passage": true
+  }
+ ],
+ "shopping_streets": [
+  {
+   "name": null,
+   "tiles": 43,
+   "bbox_core_tiles": [
+    167,
+    104,
+    176,
+    119
+   ],
+   "centre_m": [
+    121,
+    -148
+   ],
+   "shops_nearby": 8
+  },
+  {
+   "name": null,
+   "tiles": 34,
+   "bbox_core_tiles": [
+    211,
+    53,
+    220,
+    63
+   ],
+   "centre_m": [
+    264,
+    -309
+   ],
+   "shops_nearby": 4
+  },
+  {
+   "name": null,
+   "tiles": 28,
+   "bbox_core_tiles": [
+    122,
+    126,
+    129,
+    134
+   ],
+   "centre_m": [
+    -9,
+    -92
+   ],
+   "shops_nearby": 5
+  },
+  {
+   "name": null,
+   "tiles": 25,
+   "bbox_core_tiles": [
+    126,
+    107,
+    130,
+    117
+   ],
+   "centre_m": [
+    -2,
+    -143
+   ],
+   "shops_nearby": 4
+  },
+  {
+   "name": null,
+   "tiles": 18,
+   "bbox_core_tiles": [
+    122,
+    188,
+    124,
+    196
+   ],
+   "centre_m": [
+    -19,
+    98
+   ],
+   "shops_nearby": 3
+  },
+  {
+   "name": null,
+   "tiles": 18,
+   "bbox_core_tiles": [
+    91,
+    200,
+    99,
+    201
+   ],
+   "centre_m": [
+    -104,
+    123
+   ],
+   "shops_nearby": 3
+  },
+  {
+   "name": null,
+   "tiles": 16,
+   "bbox_core_tiles": [
+    218,
+    79,
+    219,
+    87
+   ],
+   "centre_m": [
+    267,
+    -230
+   ],
+   "shops_nearby": 3
+  },
+  {
+   "name": null,
+   "tiles": 14,
+   "bbox_core_tiles": [
+    110,
+    165,
+    121,
+    168
+   ],
+   "centre_m": [
+    -44,
+    20
+   ],
+   "shops_nearby": 4
+  }
+ ],
+ "street_signs": [
+  [
+   "商店街",
+   [
+    169,
+    124
+   ]
+  ],
+  [
+   "商店街",
+   [
+    216,
+    63
+   ]
+  ],
+  [
+   "商店街",
+   [
+    118,
+    189
+   ]
+  ],
+  [
+   "商店街",
+   [
+    100,
+    198
+   ]
+  ],
+  [
+   "草加神社通り",
+   [
+    115,
+    223
+   ]
+  ],
+  [
+   "草加神社通り",
+   [
+    137,
+    223
+   ]
+  ],
+  [
+   "日光街道",
+   [
+    242,
+    161
+   ]
+  ]
+ ],
  "entrances_core_tiles": {
   "west": [
-   38,
-   31
+   128,
+   151
   ],
   "east": [
-   49,
-   31
+   139,
+   151
   ]
  },
  "station_core_tile": [
-  40,
-  40
+  130,
+  160
  ],
  "signs": [
   [
-   42,
-   43
+   117,
+   148
   ],
   [
-   69,
-   38
+   144,
+   143
   ]
  ],
  "counts": {
-  "land_parking": 4,
-  "land_grass": 3,
+  "land_grass": 22,
+  "land_parking": 21,
   "land_water": 1,
   "land_sand": 2,
-  "zebra": 15,
-  "rail_ways": 11,
-  "rail_viaduct_ways": 11,
+  "zebra": 116,
+  "rail_ways": 16,
+  "rail_viaduct_ways": 16,
   "station_poly_tiles": 1372,
-  "buildings": 191,
+  "buildings": 1301,
   "passage_tiles": 99,
-  "trees": 22,
+  "rail_crossings_ways": 5,
+  "under_tiles": 49,
+  "shopping_street_tiles": 196,
+  "trees": 39,
   "fountain_jets": 1,
-  "lamps_generated": 9
+  "lamps_generated": 41,
+  "shopping_street_props": {
+   "lamp_shop": 5,
+   "flag_0": 3,
+   "bikes": 2,
+   "flag_1": 2,
+   "flag_2": 3
+  },
+  "street_signs": 7
  },
- "viaduct": "railway=rail with bridge=viaduct layer 1/2; inside the VARIE footprint (station building). Solid; crossed only via building_passage/corridor tiles"
+ "labels": [
+  "草加駅 西口",
+  "草加駅 東口",
+  "草加駅",
+  "氷川町ふれあい公園",
+  "草加市役所",
+  "草加市立高砂小学校",
+  "氷川中公園",
+  "ダイエー",
+  "VARIE",
+  "ヨーカドー",
+  "草加中央防災広場",
+  "マルイ",
+  "草加市立草加中学校",
+  "氷川上田公園",
+  "草加市立草加小学校",
+  "氷川神社",
+  "草加警察署草加駅前交番",
+  "日光街道",
+  "草加停車場線",
+  "草加八潮三郷線",
+  "あずま通り",
+  "草加神社通り",
+  "商店街"
+ ],
+ "viaduct": "the whole line is railway=rail bridge=viaduct (OSM). Solid; crossed via building_passage/corridor tiles in the station and by roads/paths passing under (see rail_crossings)"
 }

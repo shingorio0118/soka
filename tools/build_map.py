@@ -1,26 +1,35 @@
 #!/usr/bin/env python3
 """OSM (data/osm_raw.json) -> tile grid + object list -> assets/map.json
 
-Scale: 3 m per tile, 16x16 px tiles. The window is 80 x 80 tiles (240 m) centred on the station node.
-Everything is rasterised on a larger 110 x 110 grid first (so walls / edges at the window border are right)
+Scale: 3 m per tile, 16x16 px tiles.  The playable map is 270 x 320 tiles (810 m x 960 m): x from -390 m to +420 m
+and y from -480 m (north) to +480 m (south) around the station node (x east, y south).
+Everything is rasterised on a grid that is PAD tiles larger on every side (so walls / edges at the map border are right)
 and then cropped.
 
-Pipeline:  parse -> metres (x east, y south from the station node) -> rasterise layers
-           (land, paths, roads, rail, platforms, buildings, passages) -> autotile -> props -> collision
-           -> overrides (data/overrides.json) -> assets/map.json (+ data/build_report.json)
+Pipeline:  parse -> metres -> rasterise layers (land, paths, roads, rail, platforms, buildings, passages)
+           -> rail crossings (roads/paths passing UNDER the elevated line) -> shopping-street detection
+           -> autotile -> props / signs -> collision -> overrides (data/overrides.json)
+           -> assets/map.json (+ data/build_report.json)
 
 Usage: python3 tools/build_map.py
 """
-import json, math, hashlib, collections
+import json, math, hashlib, collections, sys
 from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import make_art
 CELL = 3.0
-HALF = 165.0                       # data half-size in metres (matches fetch_osm.py)
-FULL = int(round(2 * HALF / CELL))  # 110
-CORE = 80
-OFF = (FULL - CORE) // 2            # 15
+CORE_X = (-390.0, 420.0)           # playable extent in metres from the station node (x east)
+CORE_Y = (-480.0, 480.0)           # (y south)
+CW = int(round((CORE_X[1] - CORE_X[0]) / CELL))   # 270 tiles
+CH = int(round((CORE_Y[1] - CORE_Y[0]) / CELL))   # 320 tiles
+PAD = 12                            # extra border tiles used while rasterising
+OFF = PAD
+FW, FH = CW + 2 * PAD, CH + 2 * PAD
+GX0 = CORE_X[0] - PAD * CELL
+GY0 = CORE_Y[0] - PAD * CELL
 raw = json.loads((ROOT / "data/osm_raw.json").read_text())
 LAT0, LON0 = raw["_meta"]["center"]
 atlas = json.loads((ROOT / "assets/tiles.json").read_text())
@@ -32,9 +41,9 @@ def to_m(p):
 def h(*a):
     return int(hashlib.md5("|".join(map(str, a)).encode()).hexdigest()[:8], 16)
 
-def gx(x): return int(math.floor((x + HALF) / CELL))
-def gy(y): return int(math.floor((y + HALF) / CELL))
-def inside(x, y): return 0 <= x < FULL and 0 <= y < FULL
+def gx(x): return int(math.floor((x - GX0) / CELL))
+def gy(y): return int(math.floor((y - GY0) / CELL))
+def inside(x, y): return 0 <= x < FW and 0 <= y < FH
 
 # ---------------------------------------------------------------- parse
 ways, nodes, rels = [], [], []
@@ -69,12 +78,12 @@ for r in rels:
 def raster_poly(ring, holes=(), thresh=4):
     """tiles whose 3x3 sample points are inside the polygon at least `thresh` times"""
     xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
-    x0, x1 = max(0, gx(min(xs))), min(FULL - 1, gx(max(xs)))
-    y0, y1 = max(0, gy(min(ys))), min(FULL - 1, gy(max(ys)))
+    x0, x1 = max(0, gx(min(xs))), min(FW - 1, gx(max(xs)))
+    y0, y1 = max(0, gy(min(ys))), min(FH - 1, gy(max(ys)))
     if x1 < x0 or y1 < y0: return set()
     sub = np.array([-1.0, 0.0, 1.0])
     gxs = np.arange(x0, x1 + 1); gys = np.arange(y0, y1 + 1)
-    cx = (gxs + 0.5) * CELL - HALF; cy = (gys + 0.5) * CELL - HALF
+    cx = (gxs + 0.5) * CELL + GX0; cy = (gys + 0.5) * CELL + GY0
     PX = (cx[None, :, None] + sub[None, None, :] * CELL / 3.0)  # (1, nx, 3)
     PY = (cy[:, None, None] + sub[None, None, :] * CELL / 3.0)  # (ny, 1, 3)
     PXf = np.broadcast_to(PX[:, :, :, None], (len(gys), len(gxs), 3, 3))
@@ -116,11 +125,11 @@ def walk_tiles(pts, n=1, step=0.75):
             res.append((t, (dx, dy)))
             if n >= 2:
                 if horiz:
-                    fy = ((y + HALF) / CELL) - math.floor((y + HALF) / CELL)
+                    fy = ((y - GY0) / CELL) - math.floor((y - GY0) / CELL)
                     ex = [(t[0], t[1] - 1 if fy < 0.5 else t[1] + 1)]
                     if n >= 3: ex = [(t[0], t[1] - 1), (t[0], t[1] + 1)]
                 else:
-                    fx = ((x + HALF) / CELL) - math.floor((x + HALF) / CELL)
+                    fx = ((x - GX0) / CELL) - math.floor((x - GX0) / CELL)
                     ex = [(t[0] - 1 if fx < 0.5 else t[0] + 1, t[1])]
                     if n >= 3: ex = [(t[0] - 1, t[1]), (t[0] + 1, t[1])]
                 for e2 in ex: res.append((e2, (dx, dy)))
@@ -128,7 +137,7 @@ def walk_tiles(pts, n=1, step=0.75):
     return res
 
 # ---------------------------------------------------------------- grids
-G = lambda v=None: [[v for _ in range(FULL)] for _ in range(FULL)]
+G = lambda v=None: [[v for _ in range(FW)] for _ in range(FH)]
 land = G("ground")           # ground / grass / parking / sand / water
 path = G(False)              # footways and paths
 road = G(None)               # None or road class
@@ -143,6 +152,10 @@ stationpoly = G(False)       # VARIE + transportation building footprint
 passage = G(False)
 canopy = G(False)
 props = G(None)              # prop name
+rname = G(None)              # street name per road/path tile (public street names only)
+under = G(False)             # road / path tiles that pass UNDER the elevated railway
+ss = G(False)                # shopping-street tiles
+ssname = G(None)
 notes = collections.Counter()
 
 # land use
@@ -173,13 +186,17 @@ for w in sorted(ways, key=lambda w: w["tags"].get("layer", "0")):
         crossing_ways.append(w); continue
     if hw in PATHS:
         for (x, y), _ in walk_tiles(w["pts"], 1):
-            if inside(x, y): path[y][x] = True
+            if inside(x, y):
+                path[y][x] = True
+                if t.get("name"): rname[y][x] = t["name"]
     elif hw in ROADW:
         n = ROADW[hw]
         if t.get("lanes") and t["lanes"].isdigit() and int(t["lanes"]) >= 4: n = 3
         seq = walk_tiles(w["pts"], n)
         for (x, y), d in seq:
-            if inside(x, y): road[y][x] = hw
+            if inside(x, y):
+                road[y][x] = hw
+                if t.get("name"): rname[y][x] = t["name"]
         if n >= 2:
             for (x, y), d in walk_tiles(w["pts"], 1, step=1.5):
                 if inside(x, y) and road[y][x] and (x + y) % 2 == 0:
@@ -265,8 +282,8 @@ for ring, holes, tiles in roof_polys:
 
 # station region
 region = G(False)
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         if stationpoly[y][x] or rail[y][x] or plat[y][x] or railaux[y][x]: region[y][x] = True
         if rail[y][x]: bld[y][x] = 0
 
@@ -276,9 +293,51 @@ for w in passage_ways:
         if inside(x, y): passage[y][x] = True
 notes["passage_tiles"] = sum(sum(r) for r in passage)
 
+# ---------------------------------------------------------------- rail crossings (roads / paths UNDER the elevated line)
+# The whole Tobu line here is a viaduct (bridge=viaduct), and OSM has no level crossings, so a road or path whose
+# centre line geometrically crosses a rail way (without sharing a node) runs underneath it.  Those tiles stay walkable.
+def seg_cross(a, b, c, d):
+    def o(p, q, r): return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    return o(a, b, c) * o(a, b, d) < 0 and o(c, d, a) * o(c, d, b) < 0
+rail_segs = []
+for w in ways:
+    t = w["tags"]
+    if t.get("railway") in RAILS and t.get("tunnel") not in ("yes", "building_passage"):
+        for a, b in zip(w["pts"], w["pts"][1:]):
+            if min(a[0], b[0]) < CORE_X[1] + 60 and max(a[0], b[0]) > CORE_X[0] - 60 and min(a[1], b[1]) < CORE_Y[1] + 60 and max(a[1], b[1]) > CORE_Y[0] - 60:
+                rail_segs.append((a, b))
+cross_pts = []          # (x_m, y_m, way_id, highway, name)
+cross_tiles = G(False)
+for w in ways:
+    t = w["tags"]; hw = t.get("highway")
+    if not hw or t.get("tunnel") == "building_passage" or hw == "corridor" or t.get("indoor") == "yes": continue
+    if hw not in ROADW and hw not in PATHS: continue
+    if hw == "footway" and t.get("footway") == "crossing": continue
+    hit = []
+    for a, b in zip(w["pts"], w["pts"][1:]):
+        for c, d in rail_segs:
+            if max(a[0], b[0]) < min(c[0], d[0]) - 1 or min(a[0], b[0]) > max(c[0], d[0]) + 1 or max(a[1], b[1]) < min(c[1], d[1]) - 1 or min(a[1], b[1]) > max(c[1], d[1]) + 1: continue
+            if seg_cross(a, b, c, d):
+                # intersection point
+                den = (b[0] - a[0]) * (d[1] - c[1]) - (b[1] - a[1]) * (d[0] - c[0])
+                u = ((c[0] - a[0]) * (d[1] - c[1]) - (c[1] - a[1]) * (d[0] - c[0])) / den
+                hit.append((a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])))
+    if not hit: continue
+    n = ROADW.get(hw, 1) if hw in ROADW else 1
+    for (x, y), _ in walk_tiles(w["pts"], n):
+        if inside(x, y) and any(math.hypot(gx(px_) - x, gy(py_) - y) <= 9 for px_, py_ in hit): cross_tiles[y][x] = True
+    for px_, py_ in hit:
+        cross_pts.append((px_, py_, w["id"], hw, t.get("name")))
+for y in range(FH):
+    for x in range(FW):
+        if cross_tiles[y][x] and (road[y][x] or path[y][x]) and (rail[y][x] or railaux[y][x] or plat[y][x]) and not stationpoly[y][x] and not passage[y][x]:
+            under[y][x] = True
+notes["rail_crossings_ways"] = len(set(c[2] for c in cross_pts))
+notes["under_tiles"] = sum(sum(r) for r in under)
+
 # ---------------------------------------------------------------- stations / entrances / spawn
 station = [n for n in nodes if n["tags"].get("railway") == "station"][0]
-entrances = [n for n in nodes if n["tags"].get("railway") == "train_station_entrance"]
+entrances = [n for n in nodes if n["tags"].get("railway") == "train_station_entrance" and math.hypot(*n["xy"]) < 200]
 entrances.sort(key=lambda n: n["xy"][0])
 west, east = entrances[0], entrances[-1]
 
@@ -286,13 +345,77 @@ def free_ground(x, y, allow_path=False):
     return (inside(x, y) and not road[y][x] and not bld[y][x] and not region[y][x] and not passage[y][x]
             and land[y][x] in ("ground", "grass", "sand") and (allow_path or not path[y][x]) and not canopy[y][x])
 
+# ---------------------------------------------------------------- shopping streets (商店街)
+# OSM has no street tagged 商店街 / pedestrian mall near the station, so they are detected from the data:
+# a local street or footpath tile (not a through road, not inside the station building) belongs to a "shopping street"
+# when at least SS_MIN shop / restaurant / cafe / bank POIs lie within SS_R tiles (15 m); connected runs of
+# at least SS_LEN tiles are kept.  Shop names are NOT stored - only the positions are used.
+SHOP_AMENITY = {"restaurant", "cafe", "fast_food", "bar", "pub", "bank", "pharmacy"}
+SS_R, SS_MIN, SS_LEN = 5, 2, 14
+shop_pts = []
+def is_shop(t): return ("shop" in t and t["shop"] not in ("department_store", "mall")) or t.get("amenity") in SHOP_AMENITY
+for n in nodes:
+    if is_shop(n["tags"]): shop_pts.append((gx(n["xy"][0]), gy(n["xy"][1])))
+for w in ways:
+    if is_shop(w["tags"]):
+        c = centroid(w["pts"]); shop_pts.append((gx(c[0]), gy(c[1])))
+shop_pts = [(x, y) for x, y in shop_pts if inside(x, y) and not stationpoly[y][x] and not region[y][x]]
+dens = np.zeros((FH, FW), dtype=np.int16)
+yy, xx = np.mgrid[-SS_R:SS_R + 1, -SS_R:SS_R + 1]
+disk = (xx * xx + yy * yy) <= SS_R * SS_R
+for x, y in shop_pts:
+    for dy in range(-SS_R, SS_R + 1):
+        for dx in range(-SS_R, SS_R + 1):
+            if disk[dy + SS_R, dx + SS_R] and inside(x + dx, y + dy): dens[y + dy, x + dx] += 1
+LOCAL = {"unclassified", "residential", "service", "living_street", "pedestrian", "road"}
+cand = G(False)
+for y in range(FH):
+    for x in range(FW):
+        if road[y][x] in LOCAL or (path[y][x] and not road[y][x]):
+            if dens[y, x] >= SS_MIN and not region[y][x] and not passage[y][x] and land[y][x] != "water" and not under[y][x]:
+                cand[y][x] = True
+# close 1-tile gaps along a street, then connected components
+for _ in range(2):
+    add_ = []
+    for y in range(1, FH - 1):
+        for x in range(1, FW - 1):
+            if not cand[y][x] and (road[y][x] in LOCAL or path[y][x]) and not region[y][x] and dens[y, x] >= 1:
+                if (cand[y][x - 1] and cand[y][x + 1]) or (cand[y - 1][x] and cand[y + 1][x]): add_.append((x, y))
+    for x, y in add_: cand[y][x] = True
+seen_c = set(); ss_comps = []
+for y in range(FH):
+    for x in range(FW):
+        if cand[y][x] and (x, y) not in seen_c:
+            comp = [(x, y)]; seen_c.add((x, y)); q = collections.deque([(x, y)])
+            while q:
+                cx_, cy_ = q.popleft()
+                for dx in (-1, 0, 1):
+                    for dy in (-1, 0, 1):
+                        a, b = cx_ + dx, cy_ + dy
+                        if (dx or dy) and inside(a, b) and cand[b][a] and (a, b) not in seen_c:
+                            seen_c.add((a, b)); comp.append((a, b)); q.append((a, b))
+            ss_comps.append(comp)
+ss_info = []
+for comp in sorted(ss_comps, key=len, reverse=True):
+    if len(comp) < SS_LEN: continue
+    names = collections.Counter(rname[y][x] for x, y in comp if rname[y][x])
+    nm = names.most_common(1)[0][0] if names else None
+    cid = len(ss_info)
+    for x, y in comp: ss[y][x] = True; ssname[y][x] = cid
+    xs_ = [p[0] for p in comp]; ys_ = [p[1] for p in comp]
+    nshop = sum(1 for sx, sy in shop_pts if any(abs(sx - x) <= SS_R and abs(sy - y) <= SS_R for x, y in comp[::3]))
+    ss_info.append({"name": nm, "tiles": len(comp), "bbox_core_tiles": [min(xs_) - OFF, min(ys_) - OFF, max(xs_) - OFF, max(ys_) - OFF],
+                    "centre_m": [round((sum(xs_) / len(xs_) + 0.5) * CELL + GX0), round((sum(ys_) / len(ys_) + 0.5) * CELL + GY0)], "shops_nearby": nshop})
+notes["shopping_street_tiles"] = sum(sum(r) for r in ss)
+print("shopping street components:", json.dumps(ss_info, ensure_ascii=False))
+
 # ---------------------------------------------------------------- compose layers
 base = G(None); deco = G(None); over = G(None); solid = G(False)
 def T_(name): return TID[name]
 
 near_road = G(False)
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         if road[y][x] in ("secondary", "tertiary"):
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 if inside(x + dx, y + dy): near_road[y + dy][x + dx] = True
@@ -312,8 +435,8 @@ def mask_EW(grid_same, x, y):
     if not grid_same(x - 1, y): m |= 4
     return {0: 0, 2: 1, 4: 2, 6: 3}[m]
 
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         # ground
         l = land[y][x]; r = h("g", x, y)
         if l == "grass": b = "grass_flowers" if r % 17 == 0 else f"grass_{r % 3}"
@@ -328,13 +451,18 @@ for y in range(FULL):
         if road[y][x]: b = f"road_{r % 2}"
         if road[y][x] and roadmark[y][x] is not None: b = "road_dash_h" if roadmark[y][x] else "road_dash_v"
         if road[y][x] and zebra[y][x] is not None: b = "zebra_hbars" if zebra[y][x] else "zebra_vbars"
+        if ss[y][x]: b = f"shopst_{r % 3}"
         base[y][x] = b
         if l == "water" or (bld[y][x] and not passage[y][x]): solid[y][x] = True
 
+base0 = [row[:] for row in base]
+for sx_, sy_ in shop_pts:
+    if bld[sy_][sx_]: binfo[bld[sy_][sx_]]['has_shop'] = True
+
 # houses and mid-rises (roof rows over wall rows)
 same_b = lambda i: (lambda x, y: inside(x, y) and bld[y][x] == i)
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         i = bld[y][x]
         if not i or region[y][x]: continue
         inf = binfo[i]; v = inf["variant"]; pre = "m" if inf["mid"] else "h"
@@ -355,6 +483,12 @@ for y in range(FULL):
             x1 = x
             while inside(x1 + 1, y) and bld[y][x1 + 1] == i and not (inside(x1 + 1, y + 1) and bld[y + 1][x1 + 1] == i): x1 += 1
             L = x1 - x0 + 1; door_x = x0 + (h("door", i, y) % L if L > 1 else 0)
+            if inf.get("has_shop") or (inside(x, y + 1) and ss[y + 1][x]) or (inside(x, y + 2) and ss[y + 2][x]):
+                # shop front: coloured awning over a display window (one colour per building)
+                c = h("awn", i) % 6
+                kind = "door" if (x == door_x and L >= 2) else ("sign" if (x - x0) % 4 == 3 else "shop")
+                base[y][x] = f"sf{c}_{kind}_{m}"
+                continue
             if inf["mid"]:
                 kind = "door" if x == door_x else ("win" if (x - x0) % 3 != 2 else "plain")
                 base[y][x] = f"m{v}_wall_{kind}_{m}"
@@ -370,8 +504,8 @@ for y in range(FULL):
 
 # station deck
 same_r = lambda x, y: inside(x, y) and region[y][x]
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         if not region[y][x]: continue
         solid[y][x] = True
         if rail[y][x]:
@@ -389,8 +523,8 @@ for y in range(FULL):
             base[y][x] = f"deckv_{m}" if h("dv", x, y) % 14 == 0 else f"deck_{m}"
 
 # passages
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         if passage[y][x]:
             inside_building = region[y][x] or bld[y][x]
             solid[y][x] = False
@@ -400,9 +534,17 @@ for y in range(FULL):
             else:
                 base[y][x] = f"sidewalk_{h('s', x, y) % 2}"
 
+# roads / paths passing under the elevated line: walkable, shaded, drawn under the viaduct
+for y in range(FH):
+    for x in range(FW):
+        if under[y][x]:
+            solid[y][x] = False
+            base[y][x] = base0[y][x] if base0[y][x].startswith(("road", "zebra", "sidewalk", "plaza", "shopst")) else f"road_{h('u', x, y) % 2}"
+            over[y][x] = f"under_{h('u2', x, y) % 2}"
+
 # canopies (walkable, drawn above the player)
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         if canopy[y][x]: over[y][x] = f"canopy_{h('c', x, y) % 2}"
 
 # ---------------------------------------------------------------- props from nodes / ways
@@ -439,17 +581,76 @@ for t, i, ring, holes in polys:
 
 # street lamps: generated (OSM has none here) on plaza/sidewalk tiles of a coarse lattice, only where all 4 neighbours stay walkable
 lamps = 0
-for y in range(FULL):
-    for x in range(FULL):
+for y in range(FH):
+    for x in range(FW):
         if (x % 6 == 2) and (y % 6 == 3) and base[y][x].startswith(("plaza", "sidewalk")) and free_ground(x, y) and not props[y][x]:
             nb = [(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))]
             if all(inside(a, b) and not solid[b][a] and not (road[b][a] is None and False) for a, b in nb) and not passage[y][x]:
                 props[y][x] = "lamp"; deco[y][x] = "lamp"; solid[y][x] = True; lamps += 1
 notes["lamps_generated"] = lamps
 
-# ---------------------------------------------------------------- station signboards (objects, 3x2 tiles)
+# ---------------------------------------------------------------- shopping-street furniture
+def walkable(x, y): return inside(x, y) and not solid[y][x]
+def deco_ok(x, y):
+    """free tile for street furniture, none of the 4 neighbours blocked by it (keeps lanes open)"""
+    if props[y][x] or deco[y][x] or passage[y][x] or region[y][x]: return False
+    if solid[y][x]: return False
+    if not (base[y][x].startswith(("shopst", "sidewalk", "plaza", "ground")) ): return False
+    return True
+decor_kinds = ["lamp_shop", "flag_0", "bikes", "lamp_shop", "flag_1", "flag_2"]
+decor_n = collections.Counter(); k_ = 0
+placed_decor = []
+for y in range(FH):
+    for x in range(FW):
+        if not ss[y][x] or not deco_ok(x, y): continue
+        # candidate: an edge tile of a street that is at least 2 wide, so one lane stays open
+        nb = [(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+        free_nb = [p for p in nb if walkable(*p) and ss[p[1]][p[0]]]
+        blocked_nb = [p for p in nb if not walkable(*p) or not ss[p[1]][p[0]]]
+        if len(free_nb) < 3 or not blocked_nb: continue
+        if any(math.hypot(x - a, y - b) < 4.5 for a, b in placed_decor[-12:]): continue
+        if any(math.hypot(x - a, y - b) < 4.5 for a, b in placed_decor if abs(a - x) < 6 and abs(b - y) < 6): continue
+        if h("decor", x, y) % 3 != 0: continue
+        nm = decor_kinds[k_ % len(decor_kinds)]; k_ += 1
+        props[y][x] = nm; deco[y][x] = nm; solid[y][x] = True; placed_decor.append((x, y)); decor_n[nm] += 1
+# ground tiles right in front of shop fronts (sidewalk strip): bike racks and flags
+for y in range(FH):
+    for x in range(FW):
+        if ss[y][x] or not deco_ok(x, y) or not base[y][x].startswith(("sidewalk", "ground", "plaza")): continue
+        if not any(inside(x + dx, y + dy) and ss[y + dy][x + dx] for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))): continue
+        if not all(walkable(x + dx, y + dy) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))): continue
+        if any(math.hypot(x - a, y - b) < 4 for a, b in placed_decor if abs(a - x) < 6 and abs(b - y) < 6): continue
+        if h("decor2", x, y) % 4 != 0: continue
+        nm = ["bikes", "flag_0", "flag_2", "bikes"][k_ % 4]; k_ += 1
+        props[y][x] = nm; deco[y][x] = nm; solid[y][x] = True; placed_decor.append((x, y)); decor_n[nm] += 1
+notes["shopping_street_props"] = dict(decor_n)
+
+# ---------------------------------------------------------------- signboards (objects, w x 2 tiles) and street-name plates
 objects = []
-def place_sign(ent, dirx):
+sign_images = []      # (PIL image, w_tiles) packed into assets/signs.png
+def sign_for(text, style):
+    im = make_art.text_sign(text, style)
+    sign_images.append(im)
+    return len(sign_images) - 1
+def place_block(idx, near, rmax, tile_w, avoid=None):
+    nx, ny = near
+    cands = []
+    for sy in range(ny - rmax, ny + rmax + 1):
+        for sx in range(nx - rmax - tile_w, nx + rmax + 1):
+            tiles = [(sx + a, sy + b) for a in range(tile_w) for b in range(2)]
+            if not all(inside(a, b) and free_ground(a, b) and not props[b][a] and not solid[b][a] for a, b in tiles): continue
+            if avoid and any(abs(a - avoid[0]) <= 1 and abs(b - avoid[1]) <= 3 for a, b in tiles): continue
+            below = [(sx + a, sy + 2) for a in range(tile_w)]
+            if not any(walkable(a, b) and not passage[b][a] for a, b in below): continue
+            cands.append((math.hypot(sx + tile_w / 2 - nx, sy + 1 - ny), sx, sy))
+    if not cands: return None
+    _, sx, sy = min(cands)
+    for a in range(tile_w):
+        for b in range(2): solid[sy + b][sx + a] = True
+    objects.append({"sprite": "signs", "idx": idx, "x": sx, "y": sy, "w": tile_w, "h": 2})
+    return (sx, sy)
+
+def place_sign(ent, dirx):      # the two station signboards (3x2)
     ex, ey = tile_of(ent)
     cands = []
     for sy in range(ey - 9, ey + 3):
@@ -468,8 +669,44 @@ def place_sign(ent, dirx):
     return (sx, sy)
 signs = [place_sign(west, -1), place_sign(east, 1)]
 
+st_tile = tile_of(station)
+street_signs = []
+# shopping streets: one plate at the end nearest the station ("商店街" or the OSM name when it has one)
+for cid, info in enumerate(ss_info):
+    tiles_c = [(x, y) for y in range(FH) for x in range(FW) if ss[y][x] and ssname[y][x] == cid]
+    if info["tiles"] < 18: continue
+    near = min(tiles_c, key=lambda p: math.hypot(p[0] - st_tile[0], p[1] - st_tile[1]))
+    txt = info["name"] or "商店街"
+    wt = max(3, math.ceil((len(txt) * 12 + 10) / 16))
+    p = place_block(sign_for(txt, "shop"), near, 5, wt)
+    if p: street_signs.append((txt, p))
+# main roads: a green plate for each public street name, on each side of the railway where the street exists
+SIGN_STREETS = ["草加停車場線", "草加神社通り", "日光街道"]
+for nm in SIGN_STREETS:
+    tl = [(x, y) for y in range(OFF, OFF + CH) for x in range(OFF, OFF + CW) if rname[y][x] == nm and road[y][x]]
+    for side in (-1, 1):
+        sub = [p for p in tl if (p[0] - st_tile[0]) * side > 6]
+        if not sub: continue
+        near = min(sub, key=lambda p: math.hypot(p[0] - st_tile[0], p[1] - st_tile[1]) + (0 if abs(p[1] - st_tile[1]) < 60 else 40))
+        if math.hypot(near[0] - st_tile[0], near[1] - st_tile[1]) > 150: continue
+        wt = max(3, math.ceil((len(nm) * 12 + 10) / 16))
+        p = place_block(sign_for(nm, "road"), near, 6, wt)
+        if p: street_signs.append((nm, p))
+notes["street_signs"] = len(street_signs)
+# pack the sign images into one sheet
+if sign_images:
+    sw = max(im.width for im in sign_images); sh_ = sum(im.height for im in sign_images)
+    from PIL import Image as _I
+    sheet = _I.new("RGBA", (sw, sh_), (0, 0, 0, 0)); yy_ = 0; sign_pos = []
+    for im in sign_images:
+        sheet.paste(im, (0, yy_)); sign_pos.append((0, yy_)); yy_ += im.height
+    sheet.save(ROOT / "assets/signs.png")
+    for o in objects:
+        if o["sprite"] == "signs": o["sx"], o["sy"] = sign_pos[o["idx"]]; del o["idx"]
+else:
+    (ROOT / "assets/signs.png").unlink(missing_ok=True)
+
 # ---------------------------------------------------------------- spawn
-def walkable(x, y): return inside(x, y) and not solid[y][x]
 ex, ey = tile_of(west)
 spawn = None
 # in front of the west entrance: same row as the passage mouth, 2-4 tiles west, with free tiles around
@@ -488,64 +725,165 @@ if spawn is None:
             if spawn: break
         if spawn: break
 
-# flood fill from spawn over the core window
-seen = {spawn}; q = collections.deque([spawn])
-core_ok = lambda x, y: OFF <= x < OFF + CORE and OFF <= y < OFF + CORE
-while q:
-    x, y = q.popleft()
-    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-        a, b = x + dx, y + dy
-        if core_ok(a, b) and walkable(a, b) and (a, b) not in seen: seen.add((a, b)); q.append((a, b))
-core_walk = sum(1 for y in range(OFF, OFF + CORE) for x in range(OFF, OFF + CORE) if walkable(x, y))
-
 # ---------------------------------------------------------------- overrides (hand fixes)
 ov_path = ROOT / "data/overrides.json"
 overrides = json.loads(ov_path.read_text()) if ov_path.exists() else {}
-for s in overrides.get("set", []):   # coordinates in CORE tile units (0..79)
-    x, y = s["x"] + OFF, s["y"] + OFF
-    if "base" in s: base[y][x] = s["base"]
-    if "deco" in s: deco[y][x] = s["deco"]
-    if "over" in s: over[y][x] = s["over"]
-    if "solid" in s: solid[y][x] = bool(s["solid"])
+for s_ in overrides.get("set", []):   # coordinates in map tile units (0..CW-1, 0..CH-1)
+    x, y = s_["x"] + OFF, s_["y"] + OFF
+    if "base" in s_: base[y][x] = s_["base"]
+    if "deco" in s_: deco[y][x] = s_["deco"]
+    if "over" in s_: over[y][x] = s_["over"]
+    if "solid" in s_: solid[y][x] = bool(s_["solid"])
 
-# ---------------------------------------------------------------- labels
+# ---------------------------------------------------------------- reachability (flood fill over the whole map)
+core_ok = lambda x, y: OFF <= x < OFF + CW and OFF <= y < OFF + CH
+def flood(start, allow=lambda x, y: True):
+    seen_ = {start}; q_ = collections.deque([start])
+    while q_:
+        x, y = q_.popleft()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            a, b = x + dx, y + dy
+            if core_ok(a, b) and walkable(a, b) and allow(a, b) and (a, b) not in seen_: seen_.add((a, b)); q_.append((a, b))
+    return seen_
+seen = flood(spawn)
+core_walk = sum(1 for y in range(OFF, OFF + CH) for x in range(OFF, OFF + CW) if walkable(x, y))
+# without the station passages: are the two sides still connected (by the under-viaduct crossings)?
+no_pass = lambda x, y: not (passage[y][x] and (region[y][x] or bld[y][x]))
+seen_nopass = flood(spawn, no_pass)
+east_tile = tile_of(east); east_probe = None
+for dist in range(3, 10):
+    if walkable(east_tile[0] + dist, east_tile[1]): east_probe = (east_tile[0] + dist, east_tile[1]); break
+# cut-off areas
+rest = set((x, y) for y in range(OFF, OFF + CH) for x in range(OFF, OFF + CW) if walkable(x, y)) - seen
+comps = []; left = set(rest)
+while left:
+    p0 = next(iter(left)); comp = flood(p0); comp &= left; left -= comp
+    if len(comp) < 6: continue
+    xs_ = [p[0] for p in comp]; ys_ = [p[1] for p in comp]
+    cnt = collections.Counter(base[y][x].split("_")[0] for x, y in comp)
+    comps.append({"tiles": len(comp), "centre_m": [round((sum(xs_) / len(xs_) + .5) * CELL + GX0), round((sum(ys_) / len(ys_) + .5) * CELL + GY0)],
+                  "bbox_tiles": [min(xs_) - OFF, min(ys_) - OFF, max(xs_) - OFF, max(ys_) - OFF], "ground": cnt.most_common(3)})
+comps.sort(key=lambda c: -c["tiles"])
+cross_report = []
+for px_, py_, wid, hw, nm in sorted(set(cross_pts), key=lambda c: c[1]):
+    cross_report.append({"way": wid, "kind": hw, "name": nm, "at_m": [round(px_), round(py_)]})
+# one entry per way
+byway = {}
+for c in cross_report: byway.setdefault(c["way"], c)
+cross_report = sorted(byway.values(), key=lambda c: c["at_m"][1])
+for c in cross_report:
+    gxx, gyy = gx(c["at_m"][0]), gy(c["at_m"][1])
+    c["under_tiles_near"] = sum(1 for dy in range(-6, 7) for dx in range(-6, 7) if inside(gxx + dx, gyy + dy) and under[gyy + dy][gxx + dx])
+    c["in_map"] = core_ok(gxx, gyy)
+    c["reachable_from_spawn"] = any((gxx + dx, gyy + dy) in seen for dy in range(-6, 7) for dx in range(-6, 7) if under[gyy + dy][gxx + dx])
+    c["reachable_without_station_passage"] = any((gxx + dx, gyy + dy) in seen_nopass for dy in range(-6, 7) for dx in range(-6, 7) if under[gyy + dy][gxx + dx])
+
+# ---------------------------------------------------------------- labels (a label id per tile, run-length encoded)
 def tile_core(n): return (gx(n["xy"][0]) - OFF, gy(n["xy"][1]) - OFF)
-labels = []
-wx, wy = tile_core(west); exx, exy = tile_core(east); sx_, sy_ = tile_core(station)
-labels.append({"name": "草加駅 西口", "x": wx - 4, "y": wy + 2, "r": 11})
-labels.append({"name": "草加駅 東口", "x": exx + 4, "y": exy + 2, "r": 11})
-labels.append({"name": "草加駅", "x": sx_, "y": sy_, "r": 7})
+lab_names = []; lab_idx = {}
+def lid(name):
+    if name not in lab_idx: lab_idx[name] = len(lab_names) + 1; lab_names.append(name)
+    return lab_idx[name]
+labid = np.zeros((FH, FW), dtype=np.uint8); labpri = np.zeros((FH, FW), dtype=np.float32)
+def paint(x, y, p, name):
+    if inside(x, y) and p >= labpri[y, x]: labid[y, x] = lid(name); labpri[y, x] = p
+def disc(cx, cy, r, name, p_core, p_out, core=0.55):
+    for yy in range(int(cy - r) - 1, int(cy + r) + 2):
+        for xx in range(int(cx - r) - 1, int(cx + r) + 2):
+            d = math.hypot(xx - cx, yy - cy)
+            if d <= r: paint(xx, yy, p_core if d / r <= core else p_out, name)
+def dilate_paint(tiles, p, name, r):
+    for (x, y) in tiles:
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1): paint(x + dx, y + dy, p, name)
+wxx, wyy = tile_of(west); exx_, exy_ = tile_of(east); stx, sty = tile_of(station)
+disc(wxx - 4, wyy + 2, 11, "草加駅 西口", 6, 3)
+disc(exx_ + 4, exy_ + 2, 11, "草加駅 東口", 6, 3)
+disc(stx, sty, 7, "草加駅", 6, 3)
+LAND_AM = {"townhall", "library", "school", "police", "post_office", "community_centre", "fire_station", "place_of_worship", "kindergarten"}
+n_land = 0
 for t, i, ring, holes in polys:
     nm = t.get("name")
+    if not nm: continue
     if nm in ("マルイ", "ヨーカドー", "ダイエー", "VARIE"):
-        c = centroid(ring)
-        r = 9 if nm != "VARIE" else 6
-        labels.append({"name": nm, "x": gx(c[0]) - OFF, "y": gy(c[1]) - OFF, "r": r})
+        c = centroid(ring); disc(gx(c[0]), gy(c[1]), 9 if nm != "VARIE" else 6, nm, 5, 2, core=0.5)
+    elif t.get("amenity") in LAND_AM or t.get("leisure") == "park":
+        tl = raster_poly(ring, holes, thresh=2)
+        if not tl:
+            c = centroid(ring); tl = {(gx(c[0]), gy(c[1]))}
+        if len(tl) > 4000: continue
+        tl = [(x, y) for (x, y) in tl if inside(x, y)]
+        for (x, y) in tl: paint(x, y, 5, nm)
+        dilate_paint(tl, 1, nm, 2); n_land += 1
+for n_ in nodes:
+    t = n_["tags"]
+    if t.get("name") and t.get("amenity") in LAND_AM:
+        x, y = tile_of(n_); disc(x, y, 4, t["name"], 5, 1)
+# streets
+named = collections.defaultdict(list)
+for y in range(FH):
+    for x in range(FW):
+        if rname[y][x] and (road[y][x] or path[y][x]): named[rname[y][x]].append((x, y))
+for nm, tl in named.items():
+    for (x, y) in tl: paint(x, y, 4, nm)
+    dilate_paint(tl, 2.5, nm, 2)
+for cid, info in enumerate(ss_info):
+    tl = [(x, y) for y in range(FH) for x in range(FW) if ss[y][x] and ssname[y][x] == cid]
+    nm = info["name"] or "商店街"
+    for (x, y) in tl: paint(x, y, 4.5, nm)
+    dilate_paint(tl, 2.6, nm, 2)
+# under-viaduct crossings
+for y in range(FH):
+    for x in range(FW):
+        if under[y][x] and labpri[y, x] < 4.2 and rname[y][x]: paint(x, y, 4.2, rname[y][x])
 
 # ---------------------------------------------------------------- crop + write
-def crop(g, f=lambda v: v):
-    return [[f(g[y + OFF][x + OFF]) for x in range(CORE)] for y in range(CORE)]
+def rle(flat):
+    out_ = []; prev = None; n = 0
+    for v in flat:
+        if v == prev: n += 1
+        else:
+            if prev is not None: out_ += [prev, n]
+            prev, n = v, 1
+    out_ += [prev, n]
+    return out_
+def crop_flat(g, f=lambda v: v):
+    return [f(g[y + OFF][x + OFF]) for y in range(CH) for x in range(CW)]
 idn = lambda v: TID[v] if v else -1
+lab_flat = [int(labid[y + OFF, x + OFF]) for y in range(CH) for x in range(CW)]
+used = sorted(set(lab_flat) - {0}); remap = {0: 0}
+for k_, u in enumerate(used, 1): remap[u] = k_
+lab_names = [lab_names[u - 1] for u in used]
+lab_flat = [remap[v] for v in lab_flat]
 out = {
-    "version": 1, "tile": 16, "cellMeters": CELL, "w": CORE, "h": CORE,
+    "version": 2, "tile": 16, "cellMeters": CELL, "w": CW, "h": CH,
+    "extentMeters": {"x": list(CORE_X), "y": list(CORE_Y)},
     "center": {"lat": LAT0, "lon": LON0},
     "attribution": "地図データ © OpenStreetMap contributors (ODbL)",
     "tileset": "tiles.png", "names": atlas["names"],
-    "layers": {"base": crop(base, idn), "deco": crop(deco, idn), "over": crop(over, idn)},
-    "solid": ["".join("1" if solid[y + OFF][x + OFF] else "0" for x in range(CORE)) for y in range(CORE)],
+    "encoding": "row-major run-length [value,count,...]",
+    "layers": {"base": rle(crop_flat(base, idn)), "deco": rle(crop_flat(deco, idn)), "over": rle(crop_flat(over, idn))},
+    "solid": rle(crop_flat(solid, lambda v: 1 if v else 0)),
+    "labelNames": lab_names, "labelGrid": rle(lab_flat),
     "objects": [dict(o, x=o["x"] - OFF, y=o["y"] - OFF) for o in objects],
-    "labels": labels,
+    "station": {"x": stx - OFF, "y": sty - OFF},
     "spawn": {"x": spawn[0] - OFF, "y": spawn[1] - OFF, "dir": "right"},
     "source": raw.get("_source"), "fetched": raw["_meta"].get("fetched"),
 }
 (ROOT / "assets/map.json").write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")))
 report = {
-    "window_tiles": [CORE, CORE], "window_meters": [CORE * CELL] * 2, "full_grid": FULL,
-    "spawn_tile": out["spawn"], "walkable_tiles_in_window": core_walk, "reachable_from_spawn": len(seen),
-    "reachable_ratio": round(len(seen) / core_walk, 3),
-    "entrances_core_tiles": {"west": [wx, wy], "east": [exx, exy]}, "station_core_tile": [sx_, sy_],
-    "signs": [list(s) if s else None for s in signs], "counts": dict(notes),
-    "viaduct": "railway=rail with bridge=viaduct layer 1/2; inside the VARIE footprint (station building). Solid; crossed only via building_passage/corridor tiles",
+    "map_tiles": [CW, CH], "map_meters": [CW * CELL, CH * CELL], "extent_m": {"x": list(CORE_X), "y": list(CORE_Y)}, "raster_grid": [FW, FH],
+    "spawn_tile": out["spawn"], "walkable_tiles": core_walk, "reachable_from_spawn": len(seen),
+    "reachable_ratio": round(len(seen) / core_walk, 4),
+    "reachable_ratio_without_station_passages": round(len(seen_nopass) / core_walk, 4),
+    "east_side_reachable_without_station_passages": bool(east_probe and east_probe in seen_nopass),
+    "cut_off_areas": comps[:15], "cut_off_total_tiles": len(rest),
+    "rail_crossings": cross_report,
+    "shopping_streets": ss_info,
+    "street_signs": [[a, [p[0] - OFF, p[1] - OFF]] for a, p in street_signs],
+    "entrances_core_tiles": {"west": list(tile_core(west)), "east": list(tile_core(east))}, "station_core_tile": list(tile_core(station)),
+    "signs": [[s_[0] - OFF, s_[1] - OFF] if s_ else None for s_ in signs], "counts": dict(notes), "labels": lab_names,
+    "viaduct": "the whole line is railway=rail bridge=viaduct (OSM). Solid; crossed via building_passage/corridor tiles in the station and by roads/paths passing under (see rail_crossings)",
 }
 (ROOT / "data/build_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
-print(json.dumps(report, ensure_ascii=False, indent=1))
+print(json.dumps({k: v for k, v in report.items() if k not in ("labels",)}, ensure_ascii=False, indent=1))

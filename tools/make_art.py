@@ -5,6 +5,7 @@ Outputs (in assets/):
   tiles.png   16x16 tile atlas (20 columns)
   tiles.json  {"tile":16,"cols":20,"names":[...]}  index = position in the atlas
   player.png  4 directions (down,left,right,up) x 3 frames, cell 16x24
+  signs.png   (written by tools/build_map.py through text_sign()) street-name plates
   sign_soka.png  3x2 tile signboard with the pixel text 草加駅 (rendered from Noto Sans CJK JP Bold, SIL OFL,
                  thresholded to 1-bit pixels; only the resulting bitmap is shipped)
 Run: python3 tools/make_art.py
@@ -347,6 +348,93 @@ def p_signpost():
     rect(im, 7, 4, 8, 14, "#7a7f86"); rect(im, 3, 2, 12, 6, "#e6c43a"); rect(im, 4, 3, 11, 5, "#fff6c9")
     return im
 
+
+# ---------------------------------------------------------------- shopping street (商店街) art
+AWN = ["#d4574a", "#3f6fb5", "#3f8f5f", "#e0a030", "#8a5ab0", "#2f9aa8"]
+WALLS = ["#eadfc4", "#f0ede4", "#e8dec6", "#dccdae", "#f0e8d2", "#dedad2"]
+def t_shopst(seed):
+    r = random.Random(seed); im = new("#d8b494")
+    # running-bond brick pavement, warm brick colour with a lighter border stripe on the odd variant
+    for y in range(0, T, 4):
+        rect(im, 0, y, T - 1, y, "#b98f72")
+        off = 0 if (y // 4) % 2 == 0 else 4
+        for x in range(off, T, 8):
+            rect(im, x, y, x, y + 3, "#b98f72")
+    speckle(im, r, ["#e2c2a4", "#cfa888"], 12)
+    if seed % 3 == 1:
+        for x in range(0, T, 2): px(im, x, 7, "#a67c60")
+    return im
+
+def t_under(seed):
+    im = Image.new("RGBA", (T, T), (18, 22, 42, 118))
+    d = ImageDraw.Draw(im)
+    d.line((0, 7, T - 1, 7), fill=(8, 10, 24, 150)); d.line((0, 8, T - 1, 8), fill=(60, 66, 96, 70))
+    if seed % 2: d.rectangle((6, 2, 9, 4), fill=(8, 10, 24, 120))
+    return im
+
+def t_shopfront(c, kind, maskEW):
+    awn = AWN[c]; wall = WALLS[c]
+    im = new(wall)
+    rect(im, 0, 0, T - 1, 0, "#6b5a4a")                      # eave line
+    rect(im, 0, T - 2, T - 1, T - 1, "#bfae8e")              # base
+    # striped awning with scalloped edge
+    for i, x in enumerate(range(0, T, 4)):
+        col = awn if i % 2 == 0 else "#f3efe6"
+        rect(im, x, 1, x + 3, 5, col)
+        rect(im, x + 1, 6, x + 2, 6, col)
+    rect(im, 0, 1, T - 1, 1, "#00000022" if False else awn)
+    for x in range(0, T, 4): px(im, x, 6, awn if (x // 4) % 2 == 0 else "#f3efe6")
+    rect(im, 0, 7, T - 1, 7, "#8a7664")                       # awning shadow
+    if kind == "shop":
+        rect(im, 1, 8, 14, 13, "#5a4a3c"); rect(im, 2, 9, 13, 12, "#bfdcec")
+        goods = [("#d4574a", 3), ("#e8c640", 6), ("#7ab36a", 9), ("#f3efe6", 11)]
+        for col, gxx in goods: rect(im, gxx, 11, gxx + 1, 12, col)
+        rect(im, 2, 9, 13, 9, "#d8ecf6")
+    elif kind == "door":
+        rect(im, 4, 8, 11, 15, "#5a4a3c"); rect(im, 5, 9, 10, 15, "#8a6347"); rect(im, 5, 9, 10, 11, "#bfdcec"); px(im, 9, 13, "#e8d27a")
+        rect(im, 1, 9, 3, 12, "#bfdcec"); rect(im, 12, 9, 14, 12, "#bfdcec")
+    else:   # signboard
+        rect(im, 1, 8, 14, 11, "#2f3a4f"); rect(im, 2, 9, 13, 10, "#f3efe6")
+        for x in range(3, 13, 3): rect(im, x, 9, x + 1, 10, awn)
+        rect(im, 3, 12, 12, 13, "#bfdcec")
+    if maskEW & 2: rect(im, T - 1, 0, T - 1, T - 1, "#8a7664")
+    if maskEW & 4: rect(im, 0, 0, 0, T - 1, "#8a7664")
+    return im
+
+def p_flag(v):
+    im = new()
+    cols = ["#d4574a", "#3f6fb5", "#e0a030"][v]
+    rect(im, 4, 2, 4, 14, "#4f5560"); rect(im, 4, 2, 10, 2, "#4f5560")
+    rect(im, 5, 3, 10, 12, cols); rect(im, 5, 3, 5, 12, "#00000000" if False else cols)
+    rect(im, 7, 5, 8, 10, "#f3efe6")
+    rect(im, 3, 14, 6, 15, "#3d424b")
+    return im
+
+def p_lamp_shop():
+    im = new()
+    rect(im, 7, 6, 8, 14, "#4f5560"); rect(im, 6, 14, 9, 15, "#3d424b")
+    rect(im, 5, 1, 10, 5, "#d4574a"); rect(im, 6, 2, 9, 4, "#f2d27a"); rect(im, 5, 1, 10, 1, "#8f2f27"); rect(im, 5, 5, 10, 5, "#8f2f27")
+    rect(im, 2, 6, 13, 6, "#4f5560")
+    return im
+
+def text_sign(text, style):
+    """street-name plate: w x 2 tiles, pixel text from Noto Sans CJK JP Bold (SIL OFL, 1-bit bitmap only)"""
+    n = len(text); W = max(3, -(-(n * 12 + 10) // 16)) * 16; H = 32
+    im = Image.new("RGBA", (W, H), (0, 0, 0, 0)); d = ImageDraw.Draw(im)
+    fill, rim, dark = {"shop": ("#9c2f2a", "#f2f2ec", "#6e1f1c"), "road": ("#1f6b4a", "#f2f2ec", "#154a33")}[style]
+    d.rectangle((4, 22, 6, 31), fill=hexc("#6e747c")); d.rectangle((W - 7, 22, W - 5, 31), fill=hexc("#6e747c"))
+    d.rectangle((0, 0, W - 1, 23), fill=hexc(fill)); d.rectangle((1, 1, W - 2, 22), outline=hexc(rim)); d.rectangle((0, 23, W - 1, 23), fill=hexc(dark))
+    font = ImageFont.truetype("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc", 12, index=0)
+    g = Image.new("L", (W, 16), 0); gd = ImageDraw.Draw(g)
+    for k, ch in enumerate(text): gd.text((k * 12, 0), ch, font=font, fill=255)
+    g = g.point(lambda v: 255 if v > 110 else 0); bx = g.getbbox()
+    if bx:
+        ox = (W - (bx[2] - bx[0])) // 2 - bx[0]; oy = 2 + (20 - (bx[3] - bx[1])) // 2 - bx[1]
+        for yy in range(g.height):
+            for xx in range(g.width):
+                if g.getpixel((xx, yy)): im.putpixel((xx + ox, yy + oy), hexc("#ffffff"))
+    return im
+
 # ---------------------------------------------------------------- sign with pixel text
 def make_sign():
     W, H = 48, 32
@@ -484,6 +572,14 @@ def build():
     add("bench", p_bench()); add("bikes", p_bike()); add("vending", p_vending()); add("postbox", p_postbox())
     add("busstop", p_busstop()); add("lamp", p_lamp()); add("jet", p_jet()); add("signpost", p_signpost())
     add("shade", t_shade()); add("canopy_0", t_canopy(1)); add("canopy_1", t_canopy(2))
+    # shopping street, under-viaduct shade
+    for i in range(3): add(f"shopst_{i}", t_shopst(100 + i))
+    for i in range(2): add(f"under_{i}", t_under(i))
+    for c in range(len(AWN)):
+        for kind in ("shop", "door", "sign"):
+            for m, mm in enumerate([0, 2, 4, 6]): add(f"sf{c}_{kind}_{m}", t_shopfront(c, kind, mm))
+    for v in range(3): add(f"flag_{v}", p_flag(v))
+    add("lamp_shop", p_lamp_shop())
 
     cols = 20
     rows = (len(tiles) + cols - 1) // cols
